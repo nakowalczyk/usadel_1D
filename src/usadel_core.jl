@@ -15,10 +15,10 @@ Ln, Ls =200,100
 dx=1.0
 nn=Int(Ln/dx)
 ns=Int(Ls/dx)
-N=(Ln+Ls)/dx
+N=Int((Ln+Ls)/dx)
 
-#Inicjalizacja słownika
 nodes=Dict{Int,Dict{Symbol,Any}}()
+#Inicjalizacja słownika
 for n in 1:N
     nodes[n]=Dict()
     if n==1
