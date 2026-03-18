@@ -1,5 +1,4 @@
 #Usadel core
-#inicjalizacja słownika i tablic mozna zrobić w jednej pętli, ale dla przejrzystości zostawiłam to narazie w dwóch osobnych
 #Definicja parametrów
 struct params
     E::Float64
@@ -14,44 +13,100 @@ end
 #Parametry symulacji
 Ln, Ls =200,100
 dx=1.0
-nn=Int(Ln/dx)
-ns=Int(Ls/dx)
-N=Int((Ln+Ls)/dx)
 
-#Inicjalizacja słownika
-node_map=Dict{Int,Symbol}()
-for n in 1:N
-    if n==1
-        node_map[n]=:vacc
-    elseif n<nn
-        node_map[n]=:N
-    elseif n==nn
-        node_map[n]=:NS
-    elseif n==nn+1
-        node_map[n]=:SN
-    elseif n>nn+1 && n<N
-        node_map[n]=:S
-    else
-        node_map[n]=:bulk
+function setup_simulation(Ln,Ls,dx,E,Γin)
+    nn=Int(Ln/dx)
+    ns=Int(Ls/dx)
+    N=Int((Ln+Ls)/dx)
+    #struktury
+    node_map=Dict{Int,Symbol}()
+    D_tab=zeros(N)
+    Δ_tab=zeros(ComplexF64,N)
+    #inicjalizacja słownika
+    for n in 1:N
+        if n==1
+            node_map[n]=:vacc
+            D_tab[n]=0.0152
+            Δ_tab[n]=0.0
+        elseif n<nn
+            node_map[n]=:N
+            D_tab[n]=0.0152
+            Δ_tab[n]=0.0
+        elseif n==nn
+            node_map[n]=:NS
+            D_tab[n]=0.0152
+            Δ_tab[n]=0.0
+        elseif n==nn+1
+            node_map[n]=:SN
+            D_tab[n]=0.00636
+            Δ_tab[n]=1.0
+        elseif n>nn+1 && n<N
+            node_map[n]=:S
+            D_tab[n]=0.00636
+            Δ_tab[n]=1.0
+        else
+            node_map[n]=:bulk
+            D_tab[n]=0.00636
+            Δ_tab[n]=1.0
+        end
     end
+    return params(E,Γin,D_tab,Δ_tab,dx,N,node_map)
 end
 
-#Inicjalizacja tablic
-D_tab=zeros(N)
-Δ_tab=zeros(ComplexF64,N)
+p = setup_simulation(200.0, 100.0, 1.0, 0.8,0.001)
+println("Typ węzła 200: ", p.nodes[5])
+println("Wartość Delta w węźle 200: ", p.Δ[200])
 
-for n in 1:N
-    type=node_map[n]
-    if type==:vacc || type==:N || type==:NS
-        D_tab[n]=0.0152
-        Δ_tab[n]=0.0
-    elseif type==:SN || type==:S || type==:bulk
-        D_tab[n]=0.00636
-        Δ_tab[n]=1.0
+#budowa macierzy rzadkiej
+function build_eq_sys(theta,p::params)
+    #struktura
+    I,J,V=Int[],Int[],ComplexF64[]
+    r=zeros(ComplexF64,p.N)
+    h=p.dx
+    h2=h^2
+    #pochodna
+    function der_r(theta_i,i)
+        term_E=(-im*p.E+p.Γin)
+        return term_E*cos(theta_i)+p.Δ[i]*sin(theta_i)
     end
-end
 
-#sprawdzenie
-println(params(0.8,12-3,D_tab,Δ_tab,dx,N,node_map))
-println(node_map[256])
-println(D_tab[256],Δ_tab[256])
+    for i in 1:p.N
+        if type==:vacc
+            #warunek brzegowy 
+            push!(I,i); push!(J,i); push!(V,1)
+            push!(I,i); push!(J,i-1); push!(V,-1)
+            r[i]=theta[i]-theta[i-1]
+        elseif type==:N || type==:S
+            #interior 
+            push!(I,i); push!(J,i-1); push!(V,D[i]/2*h2)
+            push!(I,i); push!(J,i+1); push!(V,D[i]/2*h2)
+            d_r=der_r(theta[i],i)
+            push!(I,i); push!(J,i); push!(V,(D[i]/2*h2)-d_r)
+            #r[i]=0
+            term_E=(-im*p.E+p.Γin)
+            d2th=(theta[i-1]-2*theta[i]+theta[i+1])/h2
+            rh=term_E*sin(theta[i])-p.Δ[i]*cos(theta[i])
+            r[i]=(p.D[i]/2)*d2th-rh
+        elseif type==:NS
+            #interface
+            σn=p.D[i] #??
+            σs=p.D[i+1] #??
+            push!(I,i); push!(J,i); push!(V,σn/h)
+            push!(I,i); push!(J,i-1); push!(V,σs/h)
+            push!(I,i); push!(J,i+1); push!(V,-σn/h)
+            push!(I,i); push!(J,i-2); push!(V,-σs/h)
+            r[i]=(σs*theta[i-1]-σs*theta[i-2]-σn*theta[i+1]+σn*theta[i])/h
+        elseif type==:SN
+            #interface
+            push!(I,i); push!(J,i); push!(V,-cos(theta[i]))
+            push!(I,i); push!(J,i+1); push!(V,cos(theta[i+1]))
+            r[i]=sin(theta[i]-sin(theta[i+1]))
+        elseif type==:bulk
+            #warunek brzegowy
+            push!(I,i); push!(J,i); push!(V,1)
+            thet=atan(p.Δ[i]/(-im*p.E+p.Γin)) #arctan(delta/omega)
+            r[i]=theta[i]-thet
+        end
+    end
+    return sprase(I,J,V,p.N,p.N),r
+end
