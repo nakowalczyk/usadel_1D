@@ -1,0 +1,13 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Julia
+*.jl.cov
+*.jl.*.cache
+*.jl.cov
+*.ji
+*.so
+*.dylib
+*.o
