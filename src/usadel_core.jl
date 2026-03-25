@@ -110,3 +110,39 @@ function build_eq_sys(theta,p::params)
     end
     return sprase(I,J,V,p.N,p.N),r
 end
+
+#do przemyslenia jeszcze ta funkcja analityczna.
+function get_theta_0(p::params)
+    theta_0=zeros(ComplexF64,p.N)
+    ω=-im*p.E+p.Γin
+    atan_val=atan(p.Δ[1]/ω)
+    for i in 1:p.N
+        if p.nodes[i]==:vacc || p.nodes[i]==:N
+            theta_0[i]=0.0
+        elseif p.nodes[i]==:S || p.nodes[i]==:bulk
+            theta_0[i]=atan_val
+        elseif p.nodes[i]==:NS || p.nodes[i]==:SN
+            theta_0[i]=atan_val/2
+        end
+    end
+    return theta_0
+end
+
+function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
+    theta=copy(theta_0)
+    for k in 1:max_iters
+        J,r=build_eq_sys(theta,p)
+        if maximum(abs.(r))<=tol
+            return theta
+        end
+        η=1e-8
+        J_reg=J+η*I
+        dtheta=J_reg/(-r)
+        theta.+=lambda.*dtheta
+        if maximum(abs.(dtheta))<=tol #maybe dtheta*lambda??
+            return theta
+        end
+    end
+    return theta
+end
+
