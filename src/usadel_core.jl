@@ -2,6 +2,8 @@
 #Definicja parametrów
 struct params
     E::Float64
+    σn::Float64
+    σs::Float64
     Γin::Float64 
     D::Vector{Float64}
     Δ::Vector{ComplexF64}
@@ -53,9 +55,6 @@ function setup_simulation(Ln,Ls,dx,E,Γin)
     return params(E,Γin,D_tab,Δ_tab,dx,N,node_map)
 end
 
-p = setup_simulation(200.0, 100.0, 1.0, 0.8,0.001)
-println("Typ węzła 200: ", p.nodes[5])
-println("Wartość Delta w węźle 200: ", p.Δ[200])
 
 #budowa macierzy rzadkiej
 function build_eq_sys(theta,p::params)
@@ -64,11 +63,15 @@ function build_eq_sys(theta,p::params)
     r=zeros(ComplexF64,p.N)
     h=p.dx
     h2=h^2
-    #pochodna
+    #pochodne
     function der_r(theta_i,i)
         term_E=(-im*p.E+p.Γin)
         return term_E*cos(theta_i)+p.Δ[i]*sin(theta_i)
     end
+    function get_rh(theta_i,i)
+        term_E=(-im*p.E+p.Γin)
+        return term_E*sin(theta_i)-p.Δ[i]*cos(theta_i)
+    end 
 
     for i in 1:p.N
         if type==:vacc
@@ -83,14 +86,11 @@ function build_eq_sys(theta,p::params)
             d_r=der_r(theta[i],i)
             push!(I,i); push!(J,i); push!(V,(D[i]/2*h2)-d_r)
             #r[i]=0
-            term_E=(-im*p.E+p.Γin)
             d2th=(theta[i-1]-2*theta[i]+theta[i+1])/h2
-            rh=term_E*sin(theta[i])-p.Δ[i]*cos(theta[i])
+            rh=get_rh(theta[i],i)
             r[i]=(p.D[i]/2)*d2th-rh
         elseif type==:NS
             #interface
-            σn=p.D[i] #??
-            σs=p.D[i+1] #??
             push!(I,i); push!(J,i); push!(V,σn/h)
             push!(I,i); push!(J,i-1); push!(V,σs/h)
             push!(I,i); push!(J,i+1); push!(V,-σn/h)
