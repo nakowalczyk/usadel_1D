@@ -1,4 +1,6 @@
 #Usadel core
+using SparseArrays
+using LinearAlgebra
 #Params struct
 struct params
     E::Float64
@@ -9,20 +11,20 @@ struct params
     Δ::Vector{ComplexF64}
     dx::Float64
     N::Int
+    Ln::Float64
+    Ls::Float64    
     i0L::Int
     i0R::Int
-    Ln::Float64
-    Ls::Float64
     nodes::Dict{Int,Symbol}
 end 
 
 #setup
 function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs)
     nn=Int(Ln/dx)
-    i0L=nn
-    ns=Int(Ls/dx)
-    i0R=nn+1
+    ns=Int(Ls/dx)    
     N=Int((Ln+Ls)/dx)
+    i0L=nn
+    i0R=nn+1
     #structures
     node_map=Dict{Int,Symbol}()
     D_tab=zeros(Float64,N)
@@ -66,7 +68,7 @@ dos_at_node(theta::AbstractVector{ComplexF64},idx::Int)=abs(real(cos(theta[idx])
 function get_theta_0(p::params)
     theta_0=zeros(ComplexF64,p.N)
     ω=-im*p.E+p.Γin
-    atan_val=atan(p.Δ[1]/ω)
+    atan_val=atan(p.Δ[end]/ω)
     for i in 1:p.N
         node=p.nodes[i]
         if node==:vacc || node==:N
@@ -97,17 +99,18 @@ function build_eq_sys(theta,p::params)
         return ω*sin(theta_i)-p.Δ[i]*cos(theta_i)
     end 
     for i in 1:p.N
+        type=p.nodes[i]
         if type==:vacc
             #left boundary condition
             push!(I,i); push!(J,i); push!(V,1)
-            push!(I,i); push!(J,i+1); push!(V,-1). 
+            push!(I,i); push!(J,i+1); push!(V,-1)
             r[i]=theta[i]-theta[i+1]
         elseif type==:N || type==:S
             #interior 
-            push!(I,i); push!(J,i-1); push!(V,p.D[i]/2*h2)
-            push!(I,i); push!(J,i+1); push!(V,p.D[i]/2*h2)
+            push!(I,i); push!(J,i-1); push!(V,p.D[i]/(2*h2))
+            push!(I,i); push!(J,i+1); push!(V,p.D[i]/(2*h2))
             d_r=der_r(theta[i],i)
-            push!(I,i); push!(J,i); push!(V,(p.D[i]/2*h2)-d_r)
+            push!(I,i); push!(J,i); push!(V,(-p.D[i]/h2)-d_r)
             #r[i]=0
             d2th=(theta[i-1]-2*theta[i]+theta[i+1])/h2
             rh=get_rh(theta[i],i)
@@ -121,9 +124,9 @@ function build_eq_sys(theta,p::params)
             r[i]=(p.σs*theta[i-1]-p.σs*theta[i-2]-p.σn*theta[i+1]+p.σn*theta[i])/h
         elseif type==:SN
             #interface
-            push!(I,i); push!(J,i); push!(V,-cos(theta[i]))
-            push!(I,i); push!(J,i+1); push!(V,cos(theta[i+1]))
-            r[i]=sin(theta[i]-sin(theta[i+1]))
+            push!(I,i); push!(J,i); push!(V,cos(theta[i]))
+            push!(I,i); push!(J,i+1); push!(V,-cos(theta[i+1]))
+            r[i]=sin(theta[i])-sin(theta[i+1])
         elseif type==:bulk
             #right boundary condition
             push!(I,i); push!(J,i); push!(V,1)
@@ -143,25 +146,27 @@ function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda
             return theta
         end
         η=1e-8
-        J_reg=J+η*I
+        J_reg=J+η*sparse(I,p.N,p.N)
         dtheta=J_reg\(-r)
         theta.+=lambda.*dtheta
         if maximum(abs.(dtheta))<=tol #maybe dtheta*lambda??
-            return theta
+            return theta, true, k
         end
     end
-    return theta
+    return theta, false, max_iters
 end
 
 #DOS
 function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
-    n=p.N
     idx=node_index(x,p)
     theta=get_theta_0(p)
     dos=zeros(Float64,length(energies))
     for (k,E) in pairs(energies)
-        p_E=params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls,p.nodes)
+        p_E=params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
         theta,converged,iters=newton_basic(theta,p_E,maxIters,tol,lambda)
+        if !converged
+            @warn "Did not converge for E=$E after $iters iterations"
+        end
         dos[k]=dos_at_node(theta,idx)
     end
     return dos,idx
