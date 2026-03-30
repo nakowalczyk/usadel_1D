@@ -19,7 +19,7 @@ struct params
 end 
 
 #setup
-function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs)
+function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
     nn=Int(Ln/dx)
     ns=Int(Ls/dx)    
     N=Int((Ln+Ls)/dx)
@@ -33,27 +33,27 @@ function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs)
     for n in 1:N
         if n==1
             node_map[n]=:vacc
-            D_tab[n]=0.0152
+            D_tab[n]=Dn
             Δ_tab[n]=0.0
         elseif n<nn
             node_map[n]=:N
-            D_tab[n]=0.0152
+            D_tab[n]=Dn
             Δ_tab[n]=0.0
         elseif n==nn
             node_map[n]=:NS
-            D_tab[n]=0.0152
+            D_tab[n]=Dn
             Δ_tab[n]=0.0
         elseif n==nn+1
             node_map[n]=:SN
-            D_tab[n]=0.00636
+            D_tab[n]=Ds
             Δ_tab[n]=1.0
         elseif n>nn+1 && n<N
             node_map[n]=:S
-            D_tab[n]=0.00636
+            D_tab[n]=Ds
             Δ_tab[n]=1.0
         else
             node_map[n]=:bulk
-            D_tab[n]=0.00636
+            D_tab[n]=Ds
             Δ_tab[n]=1.0
         end
     end
@@ -143,7 +143,7 @@ function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda
     for k in 1:max_iters
         J,r=build_eq_sys(theta,p)
         if maximum(abs.(r))<=tol
-            return theta
+            return theta, true, k
         end
         η=1e-8
         J_reg=J+η*sparse(I,p.N,p.N)
@@ -159,11 +159,11 @@ end
 #DOS
 function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
     idx=node_index(x,p)
-    theta=get_theta_0(p)
     dos=zeros(Float64,length(energies))
     for (k,E) in pairs(energies)
         p_E=params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
-        theta,converged,iters=newton_basic(theta,p_E,maxIters,tol,lambda)
+        theta_0=get_theta_0(p_E)
+        theta,converged,iters=newton_basic(theta_0,p_E,maxIters,tol,lambda)
         if !converged
             @warn "Did not converge for E=$E after $iters iterations"
         end
