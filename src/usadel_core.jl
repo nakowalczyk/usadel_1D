@@ -20,9 +20,10 @@ end
 
 #setup
 function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
-    nn=Int(Ln/dx)
-    ns=Int(Ls/dx)    
-    N=Int((Ln+Ls)/dx)
+    #just a bit cleaner
+    nn = round(Int, Ln/dx)
+    ns = round(Int, Ls/dx)
+    N  = nn + ns
     i0L=nn
     i0R=nn+1
     #structures
@@ -32,7 +33,7 @@ function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
     #inicialize structures
     for n in 1:N
         if n==1
-            node_map[n]=:vacc
+            node_map[n]=:Nbulk
             D_tab[n]=Dn
             Δ_tab[n]=0.0
         elseif n<nn
@@ -77,6 +78,8 @@ function get_theta_0(p::params)
             theta_0[i]=atan_val
         elseif node==:NS || node==:SN
             theta_0[i]=atan_val/2
+        elseif node==:Nbulk || node==:N
+            theta_0[i]=0.0
         end
     end
     return theta_0
@@ -115,14 +118,14 @@ function build_eq_sys(theta,p::params)
             d2th=(theta[i-1]-2*theta[i]+theta[i+1])/h2
             rh=get_rh(theta[i],i)
             r[i]=(p.D[i]/2)*d2th-rh
-        elseif type==:NS
-            #interface
-            push!(I,i); push!(J,i); push!(V,p.σn/h)
-            push!(I,i); push!(J,i-1); push!(V,p.σs/h)
-            push!(I,i); push!(J,i+1); push!(V,-p.σn/h)
-            push!(I,i); push!(J,i-2); push!(V,-p.σs/h)
-            r[i]=(p.σs*theta[i-1]-p.σs*theta[i-2]-p.σn*theta[i+1]+p.σn*theta[i])/h
         elseif type==:SN
+            # interface: sigma_N*(θ_NS - θ_Nprev)/h - sigma_S*(θ_Snext - θ_SN)/h = 0
+            push!(I,i); push!(J,i-2); push!(V,-p.σn/h)
+            push!(I,i); push!(J,i-1); push!(V, p.σn/h)
+            push!(I,i); push!(J,i);   push!(V, p.σs/h)
+            push!(I,i); push!(J,i+1); push!(V,-p.σs/h)
+            r[i] = (p.σn*(theta[i-1] - theta[i-2]) - p.σs*(theta[i+1] - theta[i]))/h
+        elseif type==:NS
             #interface
             push!(I,i); push!(J,i); push!(V,cos(theta[i]))
             push!(I,i); push!(J,i+1); push!(V,-cos(theta[i+1]))
@@ -132,6 +135,10 @@ function build_eq_sys(theta,p::params)
             push!(I,i); push!(J,i); push!(V,1)
             thet=atan(p.Δ[i]/(-im*p.E+p.Γin)) #arctan(delta/omega)
             r[i]=theta[i]-thet
+        elseif type==:Nbulk
+            # left bulk normal reservoir: theta = 0
+            push!(I,i); push!(J,i); push!(V,1)
+            r[i] = theta[i]
         end
     end
     return sparse(I,J,V,p.N,p.N),r
@@ -146,7 +153,8 @@ function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda
             return theta, true, k
         end
         η=1e-8
-        J_reg=J+η*sparse(I,p.N,p.N)
+        #I should have been identity
+        J_reg = J + η*I
         dtheta=J_reg\(-r)
         theta.+=lambda.*dtheta
         if maximum(abs.(dtheta))<=tol #maybe dtheta*lambda??
@@ -160,14 +168,16 @@ end
 function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
     idx=node_index(x,p)
     dos=zeros(Float64,length(energies))
+    #slight change in order
+    p0 = params(energies[1], p.σn, p.σs, p.Γin, p.D, p.Δ, p.dx, p.N, p.Ln, p.Ls, p.i0L, p.i0R, p.nodes)
+    theta = get_theta_0(p0)
     for (k,E) in pairs(energies)
-        p_E=params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
-        theta_0=get_theta_0(p_E)
-        theta,converged,iters=newton_basic(theta_0,p_E,maxIters,tol,lambda)
+        p_E = params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
+        theta, converged, iters = newton_basic(theta, p_E, maxIters, tol, lambda)
         if !converged
             @warn "Did not converge for E=$E after $iters iterations"
         end
-        dos[k]=dos_at_node(theta,idx)
+        dos[k] = dos_at_node(theta, idx)
     end
     return dos,idx
 end
