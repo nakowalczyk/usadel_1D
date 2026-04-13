@@ -86,19 +86,18 @@ function get_theta_0(p::params)
 end
 
 #build equation system
-function build_eq_sys(theta,p::params)
+function build_eq_sys(theta,p::params,matsubara::Bool=false,ωn::Float64=0.0)
     #structure
     I,J,V=Int[],Int[],ComplexF64[]
     r=zeros(ComplexF64,p.N)
     h=p.dx
     h2=h^2
+    ω=matsubara ? complex(ωn) : (-im*p.E+p.Γin)
     #helper functions
     function der_r(theta_i,i)
-        ω=(-im*p.E+p.Γin)
         return ω*cos(theta_i)+p.Δ[i]*sin(theta_i)
     end
     function get_rh(theta_i,i)
-        ω=(-im*p.E+p.Γin)
         return ω*sin(theta_i)-p.Δ[i]*cos(theta_i)
     end 
     for i in 1:p.N
@@ -145,10 +144,10 @@ function build_eq_sys(theta,p::params)
 end
 
 #newton solver
-function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
+function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda::Real=0.5,matsubara::Bool=false,ωn::Float64=0.0)
     theta=copy(theta_0)
     for k in 1:max_iters
-        J,r=build_eq_sys(theta,p)
+        J,r=build_eq_sys(theta,p,matsubara,ωn)
         if maximum(abs.(r))<=tol
             return theta, true, k
         end
@@ -180,4 +179,8 @@ function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=5
         dos[k] = dos_at_node(theta, idx)
     end
     return dos,idx
+end
+
+function update_delta(Δ::Vector{Float64}, F::Matrix{ComplexF64},omegas::Vector{Float64},T::Float64, Tc::Float64)
+    
 end
