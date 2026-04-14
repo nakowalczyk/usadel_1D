@@ -19,7 +19,7 @@ struct params
 end 
 
 #setup
-function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
+function setup_simulation_NS(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
     #just a bit cleaner
     nn = round(Int, Ln/dx)
     ns = round(Int, Ls/dx)
@@ -60,6 +60,61 @@ function setup_simulation(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
     end
     return params(E,σn,σs,Γin,D_tab,Δ_tab,dx,N,Ln,Ls,i0L,i0R,node_map)
 end
+
+function setup_simulation_SNS(Ls1,Ln,Ls2,dx,E,Γin,σn,σs,Dn,Ds)
+    #just a bit cleaner
+    ns1 = round(Int, Ls1/dx)
+    nn  = round(Int, Ln/dx)
+    ns2 = round(Int, Ls2/dx)
+    N   = ns1 + nn + ns2
+    i0L=ns1
+    i0R=ns1+nn
+    #structures
+    node_map=Dict{Int,Symbol}()
+    D_tab=zeros(Float64,N)
+    Δ_tab=zeros(ComplexF64,N)
+    #inicialize structures
+    for n in 1:N
+        if n==1
+            node_map[n]=:Sbulk
+            D_tab[n]=Ds
+            Δ_tab[n]=1.0
+        elseif n<ns1
+            node_map[n]=:S
+            D_tab[n]=Ds
+            Δ_tab[n]=1.0
+        elseif n==ns1
+            node_map[n]=:SN
+            D_tab[n]=Ds
+            Δ_tab[n]=1.0
+        elseif n==ns1+1
+            node_map[n]=:NS
+            D_tab[n]=Dn
+            Δ_tab[n]=0.0
+        elseif n>ns1+1 && n<ns1+nn+1
+            node_map[n]=:N
+            D_tab[n]=Dn
+            Δ_tab[n]=0.0
+        elseif n==ns1+nn+1
+            node_map[n]=:NS
+            D_tab[n]=Dn
+            Δ_tab[n]=0.0 
+        elseif n==ns1+nn+2 
+            node_map[n]=:SN 
+            D_tab[n]=Ds 
+            Δ_tab[n]=1.0 
+        elseif n>ns1+nn+2 && n<N 
+            node_map[n]=:S 
+            D_tab[n]=Ds 
+            Δ_tab[n]=1.0 
+        else 
+            node_map[n]=:Sbulk 
+            D_tab[n]=Ds 
+            Δ_tab[n]=1.0 
+        end 
+     end 
+     return params(E,σn,σs,Γin,D_tab,Δ_tab,dx,N,Ls1,Ls2,i0L,i0R,node_map)
+end 
 
 #index & DOS helpers
 node_index(x::Real,p::params)=clamp((x>=0 ? p.i0R : p.i0L)+round(Int,x/p.dx),1,p.N)
@@ -181,6 +236,40 @@ function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=5
     return dos,idx
 end
 
-function update_delta(Δ::Vector{Float64}, F::Matrix{ComplexF64},omegas::Vector{Float64},T::Float64, Tc::Float64)
-    
+function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=100,nMats::Int=50,tol::Real=1e-10,alpha::Float64=0.1)
+    omegas=[(2n+1)*π*T for n in 0:nMats-1]
+    Δ=copy(p.Δ)
+    theta=get_theta_0(p)
+    function update_delta(Δ,F,omegas)
+        N=length(Δ)
+        new_Δ=zeros(ComplexF64,N)
+        for i in 1:N
+            new_Δ[i]=(2π*T*sum(F[k,i] for k in 1:length(omegas)))
+        end
+        return new_Δ
+    end
+    for iter in 1:maxIters
+        F=zeros(ComplexF64,nMats,p.N)
+        for (k,ωn) in pairs(omegas)
+            p_k=params(0.0,p.σn,p.σs,p.Γin,p.D,Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
+            theta,_,_=newton_basic(theta,p_k,maxIters,tol,lambda=0.5,matsubara=true,ωn=ωn)
+            F[k,:].=sin.(theta)
+        end
+        new_Δ=update_delta(Δ,F,omegas)
+        #enforce physics
+        new_Δ[1:p.i0L].=0.0
+        new_Δ[p.N]=p.Δ[p.N]
+        mixed_Δ=(1-alpha).*Δ.+alpha.*real(new_Δ)
+        mixed_Δ.=clamp(mixed_Δ,-5.0,5.0)
+
+        diff=maximum(abs.(mixed_Δ.-Δ))
+        Δ.=mixed_Δ
+
+        if diff<tol
+            println("Converged after $iter iterations with max Δ change of $diff")
+            return Δ,theta
+        end
+    end
+    @warn "Did not converge after $maxIters iterations, final max Δ change: $diff"
+    return Δ,theta
 end
