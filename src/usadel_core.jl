@@ -2,13 +2,13 @@
 using SparseArrays
 using LinearAlgebra
 #Params struct
-struct params
+mutable struct params
     E::Float64
     σn::Float64
     σs::Float64
     Γin::Float64 
     D::Vector{Float64}
-    Δ::Vector{ComplexF64}
+    Δ::Vector{Real}
     dx::Float64
     N::Int
     Ln::Float64
@@ -236,31 +236,40 @@ function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=5
     return dos,idx
 end
 
-function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=100,nMats::Int=50,tol::Real=1e-10,alpha::Float64=0.1)
+function update_delta(Delta, F, omegas, T, Tc)
+    n_omega, N_space = size(F)
+    Δ_new = similar(Delta)
+    logTTc = log(T/ Tc)
+    Msum = 2π*T*sum(1.0 ./omegas)
+    for i=1:N_space
+        Fsum = 0
+        for j=1:n_omega
+            Fsum += real(F[j, i])
+        end
+        Δ_new[i] = (2π*T*Fsum)/(logTTc + Msum)
+    end
+    return Δ_new
+end
+
+
+function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=150,nMats::Int=50,tol::Real=1e-10,alpha::Float64=0.1)
     omegas=[(2n+1)*π*T for n in 0:nMats-1]
     Δ=copy(p.Δ)
     theta=get_theta_0(p)
-    function update_delta(Δ,F,omegas)
-        N=length(Δ)
-        new_Δ=zeros(ComplexF64,N)
-        for i in 1:N
-            new_Δ[i]=(2π*T*sum(F[k,i] for k in 1:length(omegas)))
-        end
-        return new_Δ
-    end
+
     for iter in 1:maxIters
         F=zeros(ComplexF64,nMats,p.N)
         for (k,ωn) in pairs(omegas)
             p_k=params(0.0,p.σn,p.σs,p.Γin,p.D,Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
-            theta,_,_=newton_basic(theta,p_k,maxIters,tol,lambda=0.5,matsubara=true,ωn=ωn)
+            theta,_,_=newton_basic(theta,p_k,maxIters,tol,0.5,true,ωn)
             F[k,:].=sin.(theta)
         end
-        new_Δ=update_delta(Δ,F,omegas)
+        new_Δ=update_delta(Δ,F,omegas, T, Tc)
         #enforce physics
         new_Δ[1:p.i0L].=0.0
         new_Δ[p.N]=p.Δ[p.N]
-        mixed_Δ=(1-alpha).*Δ.+alpha.*real(new_Δ)
-        mixed_Δ.=clamp(mixed_Δ,-5.0,5.0)
+        mixed_Δ=(1-alpha).*Δ.+alpha.*new_Δ
+        mixed_Δ .= real.(mixed_Δ)
 
         diff=maximum(abs.(mixed_Δ.-Δ))
         Δ.=mixed_Δ
