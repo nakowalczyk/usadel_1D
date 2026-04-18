@@ -61,7 +61,6 @@ function setup_simulation_NS(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
 end
 
 function setup_simulation_SNS(Ls1,Ln,Ls2,dx,E,Γin,σn,σs,Dn,Ds)
-    #just a bit cleaner
     ns1 = round(Int, Ls1/dx)
     nn  = round(Int, Ln/dx)
     ns2 = round(Int, Ls2/dx)
