@@ -20,7 +20,6 @@ end
 
 #setup
 function setup_simulation_NS(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
-    #just a bit cleaner
     nn = round(Int, Ln/dx)
     ns = round(Int, Ls/dx)
     N  = nn + ns
@@ -121,10 +120,13 @@ node_index(x::Real,p::params)=clamp((x>=0 ? p.i0R : p.i0L)+round(Int,x/p.dx),1,p
 dos_at_node(theta::AbstractVector{ComplexF64},idx::Int)=abs(real(cos(theta[idx])))
 
 #initial guess
-function get_theta_0(p::params)
-    theta_0=zeros(ComplexF64,p.N)
-    ω=-im*p.E+p.Γin
-    atan_val=atan(p.Δ[end]/ω)
+function get_theta_0(p::params; matsubara::Bool=false, ωn::Float64=0.0)
+    theta_0 = zeros(ComplexF64, p.N)
+
+    ω = matsubara ? ωn : (-im * p.E + p.Γin)
+
+    atan_val = atan(p.Δ[end] / ω)
+
     for i in 1:p.N
         node=p.nodes[i]
         if node==:vacc || node==:N
@@ -187,8 +189,8 @@ function build_eq_sys(theta,p::params,matsubara::Bool=false,ωn::Float64=0.0)
         elseif type==:bulk
             #right boundary condition
             push!(I,i); push!(J,i); push!(V,1)
-            thet=atan(p.Δ[i]/(-im*p.E+p.Γin)) #arctan(delta/omega)
-            r[i]=theta[i]-thet
+            thet = matsubara ? atan(p.Δ[i] / ωn) : atan(p.Δ[i] / (-im*p.E + p.Γin))
+            r[i] = theta[i] - thet
         elseif type==:Nbulk
             # left bulk normal reservoir: theta = 0
             push!(I,i); push!(J,i); push!(V,1)
@@ -207,11 +209,10 @@ function newton_basic(theta_0,p::params,max_iters::Int=50,tol::Real=1e-10,lambda
             return theta, true, k
         end
         η=1e-8
-        #I should have been identity
         J_reg = J + η*I
         dtheta=J_reg\(-r)
         theta.+=lambda.*dtheta
-        if maximum(abs.(dtheta))<=tol #maybe dtheta*lambda??
+        if maximum(abs.(dtheta))<=tol
             return theta, true, k
         end
     end
@@ -222,7 +223,6 @@ end
 function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
     idx=node_index(x,p)
     dos=zeros(Float64,length(energies))
-    #slight change in order
     p0 = params(energies[1], p.σn, p.σs, p.Γin, p.D, p.Δ, p.dx, p.N, p.Ln, p.Ls, p.i0L, p.i0R, p.nodes)
     theta = get_theta_0(p0)
     for (k,E) in pairs(energies)
@@ -255,19 +255,21 @@ end
 function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=150,nMats::Int=50,tol::Real=1e-10,alpha::Float64=0.1)
     omegas=[(2n+1)*π*T for n in 0:nMats-1]
     Δ=copy(p.Δ)
-    theta=get_theta_0(p)
+    ωn=omegas[1]
+    theta = get_theta_0(p; matsubara=true, ωn)
 
     for iter in 1:maxIters
         F=zeros(ComplexF64,nMats,p.N)
         for (k,ωn) in pairs(omegas)
             p_k=params(0.0,p.σn,p.σs,p.Γin,p.D,Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
-            theta,_,_=newton_basic(theta,p_k,maxIters,tol,0.5,true,ωn)
+            theta0 = get_theta_0(p_k; matsubara=true, ωn=ωn)
+            theta,_,_=newton_basic(theta0,p_k,maxIters,tol,0.5,true,ωn)
             F[k,:].=sin.(theta)
         end
         new_Δ=update_delta(Δ,F,omegas, T, Tc)
         #enforce physics
         new_Δ[1:p.i0L].=0.0
-        new_Δ[p.N]=p.Δ[p.N]
+        new_Δ[p.N]=new_Δ[p.N-1]
         mixed_Δ=(1-alpha).*Δ.+alpha.*new_Δ
         mixed_Δ .= real.(mixed_Δ)
 
