@@ -128,14 +128,12 @@ function get_theta_0(p::params; matsubara::Bool=false, ωn::Float64=0.0)
 
     for i in 1:p.N
         node=p.nodes[i]
-        if node==:vacc || node==:N
+        if node==:vacc || node==:N || node==:Nbulk
             theta_0[i]=0.0
-        elseif node==:S || node==:bulk
+        elseif node==:S || node==:bulk || node==:Sbulk
             theta_0[i]=atan_val
         elseif node==:NS || node==:SN
             theta_0[i]=atan_val/2
-        elseif node==:Nbulk || node==:N
-            theta_0[i]=0.0
         end
     end
     return theta_0
@@ -194,6 +192,10 @@ function build_eq_sys(theta,p::params,matsubara::Bool=false,ωn::Float64=0.0)
             # left bulk normal reservoir: theta = 0
             push!(I,i); push!(J,i); push!(V,1)
             r[i] = theta[i]
+        elseif type==:Sbulk
+            push!(I,i); push!(J,i); push!(V,1)
+            thet = matsubara ? atan(p.Δ[i] / ωn) : atan(p.Δ[i] / (-im*p.E + p.Γin))
+            r[i] = theta[i] - thet
         end
     end
     return sparse(I,J,V,p.N,p.N),r
