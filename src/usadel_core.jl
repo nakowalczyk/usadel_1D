@@ -12,7 +12,8 @@ mutable struct params
     dx::Float64
     N::Int
     Ln::Float64
-    Ls::Float64    
+    Ls1::Float64
+    Ls2::Float64    
     i0L::Int
     i0R::Int
     nodes::Dict{Int,Symbol}
@@ -57,7 +58,7 @@ function setup_simulation_NS(Ln,Ls,dx,E,Γin,σn,σs,Dn,Ds)
             Δ_tab[n]=1.0
         end
     end
-    return params(E,σn,σs,Γin,D_tab,Δ_tab,dx,N,Ln,Ls,i0L,i0R,node_map)
+    return params(E,σn,σs,Γin,D_tab,Δ_tab,dx,N,Ln,Ls,0,i0L,i0R,node_map)
 end
 
 function setup_simulation_SNS(Ls1,Ln,Ls2,dx,E,Γin,σn,σs,Dn,Ds)
@@ -65,8 +66,8 @@ function setup_simulation_SNS(Ls1,Ln,Ls2,dx,E,Γin,σn,σs,Dn,Ds)
     nn  = round(Int, Ln/dx)
     ns2 = round(Int, Ls2/dx)
     N   = ns1 + nn + ns2
-    i0L=ns1
-    i0R=ns1+nn
+    i0L=ns1+nn
+    i0R=ns1+nn+1
     #structures
     node_map=Dict{Int,Symbol}()
     D_tab=zeros(Float64,N)
@@ -111,7 +112,7 @@ function setup_simulation_SNS(Ls1,Ln,Ls2,dx,E,Γin,σn,σs,Dn,Ds)
             Δ_tab[n]=1.0 
         end 
      end 
-     return params(E,σn,σs,Γin,D_tab,Δ_tab,dx,N,Ls1,Ls2,i0L,i0R,node_map)
+     return params(E,σn,σs,Γin,D_tab,Δ_tab,dx,N,Ln,Ls1,Ls2,i0L,i0R,node_map)
 end 
 
 #index & DOS helpers
@@ -224,10 +225,10 @@ end
 function compute_DOS(energies::Vector{Float64},p::params,x::Real,maxIters::Int=50,tol::Real=1e-10,lambda::Real=0.5)
     idx=node_index(x,p)
     dos=zeros(Float64,length(energies))
-    p0 = params(energies[1], p.σn, p.σs, p.Γin, p.D, p.Δ, p.dx, p.N, p.Ln, p.Ls, p.i0L, p.i0R, p.nodes)
+    p0 = params(energies[1], p.σn, p.σs, p.Γin, p.D, p.Δ, p.dx, p.N, p.Ln, p.Ls1, p.Ls2,p.i0L, p.i0R, p.nodes)
     theta = get_theta_0(p0)
     for (k,E) in pairs(energies)
-        p_E = params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
+        p_E = params(E,p.σn,p.σs,p.Γin,p.D,p.Δ,p.dx,p.N,p.Ln,p.Ls1, p.Ls2,p.i0L,p.i0R,p.nodes)
         theta, converged, iters = newton_basic(theta, p_E, maxIters, tol, lambda)
         if !converged
             @warn "Did not converge for E=$E after $iters iterations"
@@ -262,14 +263,16 @@ function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=15
     for iter in 1:maxIters
         F=zeros(ComplexF64,nMats,p.N)
         for (k,ωn) in pairs(omegas)
-            p_k=params(0.0,p.σn,p.σs,p.Γin,p.D,Δ,p.dx,p.N,p.Ln,p.Ls,p.i0L,p.i0R,p.nodes)
+            p_k=params(0.0,p.σn,p.σs,p.Γin,p.D,Δ,p.dx,p.N,p.Ln,p.Ls1,p.Ls2,p.i0L,p.i0R,p.nodes)
             theta0 = get_theta_0(p_k; matsubara=true, ωn=ωn)
             theta,_,_=newton_basic(theta0,p_k,maxIters,tol,0.5,true,ωn)
             F[k,:].=sin.(theta)
         end
         new_Δ=update_delta(Δ,F,omegas, T, Tc)
+
+        indices = [k for (k, v) in p.nodes if v == :N]
         #enforce physics
-        new_Δ[1:p.i0L].=0.0
+        new_Δ[indices].=0.0
         new_Δ[p.N]=new_Δ[p.N-1]
         mixed_Δ=(1-alpha).*Δ.+alpha.*new_Δ
         mixed_Δ .= real.(mixed_Δ)
