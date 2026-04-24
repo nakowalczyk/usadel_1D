@@ -11,3 +11,5 @@
 *.so
 *.dylib
 *.o
+
+/scripts/calorimeyry.ipynb
