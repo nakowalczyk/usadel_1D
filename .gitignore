@@ -12,3 +12,4 @@
 *.dylib
 *.o
 
+/scripts/calorimetry.ipynb

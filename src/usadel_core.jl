@@ -259,7 +259,7 @@ function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=15
     Δ=copy(p.Δ)
     ωn=omegas[1]
     theta = get_theta_0(p; matsubara=true, ωn)
-
+    diff = 100
     for iter in 1:maxIters
         F=zeros(ComplexF64,nMats,p.N)
         for (k,ωn) in pairs(omegas)
