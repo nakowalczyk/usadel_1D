@@ -90,19 +90,19 @@ function setup_simulation_SNS(Ls1,Ln,Ls2,dx,E,Γin,σn,σs,Dn,Ds)
             node_map[n]=:NS
             D_tab[n]=Dn
             Δ_tab[n]=0.0
-        elseif n>ns1+1 && n<ns1+nn+1
+        elseif n>ns1+1 && n<ns1+nn
             node_map[n]=:N
             D_tab[n]=Dn
             Δ_tab[n]=0.0
-        elseif n==ns1+nn+1
+        elseif n==ns1+nn
             node_map[n]=:NS
             D_tab[n]=Dn
             Δ_tab[n]=0.0 
-        elseif n==ns1+nn+2 
+        elseif n==ns1+nn+1 
             node_map[n]=:SN 
             D_tab[n]=Ds 
             Δ_tab[n]=1.0 
-        elseif n>ns1+nn+2 && n<N 
+        elseif n>ns1+nn+1 && n<N 
             node_map[n]=:S 
             D_tab[n]=Ds 
             Δ_tab[n]=1.0 
@@ -172,18 +172,38 @@ function build_eq_sys(theta,p::params,matsubara::Bool=false,ωn::Float64=0.0)
             d2th=(theta[i-1]-2*theta[i]+theta[i+1])/h2
             rh=get_rh(theta[i],i)
             r[i]=(p.D[i]/2)*d2th-rh
-        elseif type==:SN
-            # interface: sigma_N*(θ_NS - θ_Nprev)/h - sigma_S*(θ_Snext - θ_SN)/h = 0
-            push!(I,i); push!(J,i-2); push!(V,-p.σn/h)
-            push!(I,i); push!(J,i-1); push!(V, p.σn/h)
-            push!(I,i); push!(J,i);   push!(V, p.σs/h)
-            push!(I,i); push!(J,i+1); push!(V,-p.σs/h)
-            r[i] = (p.σn*(theta[i-1] - theta[i-2]) - p.σs*(theta[i+1] - theta[i]))/h
-        elseif type==:NS
-            #interface
-            push!(I,i); push!(J,i); push!(V,cos(theta[i]))
-            push!(I,i); push!(J,i+1); push!(V,-cos(theta[i+1]))
-            r[i]=sin(theta[i])-sin(theta[i+1])
+        elseif type == :SN
+            if i < p.N && p.nodes[i+1] == :NS
+                # left interface: SN | NS
+                push!(I,i); push!(J,i-1); push!(V,-p.σs/h)
+                push!(I,i); push!(J,i);   push!(V, p.σs/h)
+                push!(I,i); push!(J,i+1); push!(V, p.σn/h)
+                push!(I,i); push!(J,i+2); push!(V,-p.σn/h)
+
+                r[i] = (p.σs*(theta[i] - theta[i-1]) - p.σn*(theta[i+2] - theta[i+1]))/h
+            else
+                # right interface: NS | SN
+                push!(I,i); push!(J,i-2); push!(V,-p.σn/h)
+                push!(I,i); push!(J,i-1); push!(V, p.σn/h)
+                push!(I,i); push!(J,i);   push!(V, p.σs/h)
+                push!(I,i); push!(J,i+1); push!(V,-p.σs/h)
+
+                r[i] = (p.σn*(theta[i-1] - theta[i-2]) - p.σs*(theta[i+1] - theta[i]))/h
+            end
+        elseif type == :NS
+            if i > 1 && p.nodes[i-1] == :SN
+                # left interface continuity: SN | NS
+                push!(I,i); push!(J,i-1); push!(V, cos(theta[i-1]))
+                push!(I,i); push!(J,i);   push!(V,-cos(theta[i]))
+
+                r[i] = sin(theta[i-1]) - sin(theta[i])
+            else
+                # right interface continuity: NS | SN
+                push!(I,i); push!(J,i);   push!(V, cos(theta[i]))
+                push!(I,i); push!(J,i+1); push!(V,-cos(theta[i+1]))
+
+                r[i] = sin(theta[i]) - sin(theta[i+1])
+            end
         elseif type==:bulk
             #right boundary condition
             push!(I,i); push!(J,i); push!(V,1)
@@ -198,6 +218,7 @@ function build_eq_sys(theta,p::params,matsubara::Bool=false,ωn::Float64=0.0)
             thet = matsubara ? atan(p.Δ[i] / ωn) : atan(p.Δ[i] / (-im*p.E + p.Γin))
             r[i] = theta[i] - thet
         end
+
     end
     return sparse(I,J,V,p.N,p.N),r
 end
@@ -270,10 +291,10 @@ function self_consistent_delta(p::params,T::Float64,Tc::Float64,maxIters::Int=15
         end
         new_Δ=update_delta(Δ,F,omegas, T, Tc)
 
-        indices = [k for (k, v) in p.nodes if v == :N]
-        #enforce physics
+        indices = [k for (k, v) in p.nodes if v == :N || v == :NS]
         new_Δ[indices].=0.0
-        new_Δ[p.N]=new_Δ[p.N-1]
+        new_Δ[1] = new_Δ[2]
+        new_Δ[p.N] = new_Δ[p.N-1]
         mixed_Δ=(1-alpha).*Δ.+alpha.*new_Δ
         mixed_Δ .= real.(mixed_Δ)
 
